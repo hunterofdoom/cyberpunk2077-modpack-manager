@@ -613,7 +613,23 @@ class CyberpunkModApp(tk.Tk):
 
         try:
             self.log_diag(f"\n🚀 Lanzando Cyberpunk 2077 con mods desde: {exe}")
-            subprocess.Popen([str(exe)], cwd=str(exe.parent))
+            
+            # Intento 1: Lanzamiento directo estándar (sin privilegios de admin)
+            try:
+                subprocess.Popen([str(exe)], cwd=str(exe.parent))
+            except OSError as ex:
+                # Si Windows requiere elevación (WinError 740), usar ShellExecute nativo
+                if getattr(ex, 'winerror', None) == 740:
+                    ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", str(exe), "", str(exe.parent), 1)
+                    if ret <= 32:
+                        # Si el usuario canceló el diálogo UAC o falló
+                        raise OSError(740, "Se canceló la autorización de elevación de Windows.", str(exe))
+                else:
+                    # Intento alternativo con ShellExecuteW estándar
+                    ret = ctypes.windll.shell32.ShellExecuteW(None, "open", str(exe), "", str(exe.parent), 1)
+                    if ret <= 32:
+                        raise ex
+
             messagebox.showinfo("Iniciando Juego", "¡Cyberpunk 2077 se está iniciando con todos tus mods cargados!")
         except Exception as e:
             messagebox.showerror("Error al iniciar", f"No se pudo iniciar el juego:\n{e}")
