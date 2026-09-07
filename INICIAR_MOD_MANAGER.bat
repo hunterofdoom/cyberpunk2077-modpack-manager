@@ -7,19 +7,24 @@ echo =======================================================
 echo    CYBERPUNK 2077 // MODPACK AUTO-MANAGER ^& LAUNCHER
 echo =======================================================
 echo.
-echo Comprobando entorno de Python...
 
 where python >nul 2>nul
 if %errorlevel% neq 0 (
-    echo [ERROR] No se ha encontrado Python instalado en el sistema.
-    echo Por favor instala Python 3.10 o superior desde python.org
-    echo y asegurate de marcar "Add Python to PATH".
+    echo [ERROR] No se ha encontrado Python en este equipo.
+    echo Por favor instala Python 3.10 o superior desde https://www.python.org
+    echo y asegurate de marcar la casilla "Add python.exe to PATH".
     echo.
     pause
     exit /b 1
 )
 
-echo [OK] Python detectado.
+echo Comprobando dependencias necesarias (OpenCV, Pillow, NumPy)...
+python -c "import cv2, PIL, numpy" >nul 2>nul
+if %errorlevel% neq 0 (
+    echo Instalando dependencias automaticamente...
+    pip install --quiet opencv-python Pillow numpy
+)
+
 echo Iniciando aplicacion grafica...
 echo.
 
