@@ -5,6 +5,7 @@ import json
 import webbrowser
 import threading
 import subprocess
+import shutil
 import ctypes
 from pathlib import Path
 import tkinter as tk
@@ -21,6 +22,10 @@ CONFIG_FILE = BASE_DIR / "cp2077_mod_manager_config.json"
 TPL_VORTEX_PATH = ASSETS_DIR / "tpl_download_manually.png"
 TPL_SLOW_PATH = ASSETS_DIR / "tpl_slow_download.png"
 TPL_DONT_ASK_PATH = ASSETS_DIR / "tpl_btn_dont_ask_rgb.png"
+
+VORTEX_APPDATA = Path(os.environ.get("APPDATA", "")) / "Vortex"
+VORTEX_DOWNLOADS = VORTEX_APPDATA / "downloads" / "cyberpunk2077"
+VORTEX_STAGING = VORTEX_APPDATA / "cyberpunk2077" / "mods"
 
 DEFAULT_KNOWN_PATHS = [
     Path(r"C:\Users\Audur\Desktop\Games NVM\Cyberpunk 2077"),
@@ -75,8 +80,8 @@ class CyberpunkModApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Cyberpunk 2077 - Modpack Auto-Manager & Launcher")
-        self.geometry("860x650")
-        self.minsize(800, 580)
+        self.geometry("900x700")
+        self.minsize(840, 620)
         self.configure(bg="#0d0d11")
 
         self.auto_running = False
@@ -155,9 +160,9 @@ class CyberpunkModApp(tk.Tk):
         self.status_badge.pack(side=tk.RIGHT, padx=20, pady=18)
 
         content = tk.Frame(self, bg="#0d0d11")
-        content.pack(fill=tk.BOTH, expand=True, padx=20, pady=15)
+        content.pack(fill=tk.BOTH, expand=True, padx=20, pady=12)
 
-        # 1. URL Section
+        # 1. URL Section & Auto Download
         url_frame = tk.LabelFrame(
             content,
             text=" 1. Colección Nexus Mods / Vortex ",
@@ -167,7 +172,7 @@ class CyberpunkModApp(tk.Tk):
             bd=1,
             relief=tk.SOLID,
         )
-        url_frame.pack(fill=tk.X, pady=8)
+        url_frame.pack(fill=tk.X, pady=6)
 
         self.url_var = tk.StringVar(value="https://www.nexusmods.com/cyberpunk2077/collections/xyz-spanish")
         url_entry = tk.Entry(
@@ -179,7 +184,7 @@ class CyberpunkModApp(tk.Tk):
             insertbackground="#00e5ff",
             relief=tk.FLAT,
         )
-        url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=12, pady=12)
+        url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=12, pady=10)
 
         open_btn = tk.Button(
             url_frame,
@@ -194,7 +199,7 @@ class CyberpunkModApp(tk.Tk):
             padx=12,
             cursor="hand2",
         )
-        open_btn.pack(side=tk.LEFT, padx=(0, 8), pady=12)
+        open_btn.pack(side=tk.LEFT, padx=(0, 8), pady=10)
 
         self.auto_btn = tk.Button(
             url_frame,
@@ -208,21 +213,56 @@ class CyberpunkModApp(tk.Tk):
             padx=15,
             cursor="hand2",
         )
-        self.auto_btn.pack(side=tk.RIGHT, padx=12, pady=12)
+        self.auto_btn.pack(side=tk.RIGHT, padx=12, pady=10)
 
-        # 2. Status & Diagnostic Frame
+        # 2. Vortex Detection & Fast Sync
+        vortex_frame = tk.LabelFrame(
+            content,
+            text=" 2. Detección de Mods en Vortex ",
+            font=("Segoe UI", 10, "bold"),
+            fg="#39ff14",
+            bg="#171722",
+            bd=1,
+            relief=tk.SOLID,
+        )
+        vortex_frame.pack(fill=tk.X, pady=6)
+
+        self.vortex_status_lbl = tk.Label(
+            vortex_frame,
+            text="Escaneando Vortex...",
+            font=("Segoe UI", 9),
+            fg="#ffffff",
+            bg="#171722",
+            justify=tk.LEFT,
+        )
+        self.vortex_status_lbl.pack(side=tk.LEFT, padx=12, pady=10)
+
+        self.sync_btn = tk.Button(
+            vortex_frame,
+            text="📥 Desplegar Mods de Vortex al Juego",
+            command=self.sync_vortex_to_game,
+            bg="#39ff14",
+            fg="#05260f",
+            activebackground="#70ff56",
+            font=("Segoe UI", 9, "bold"),
+            relief=tk.FLAT,
+            padx=15,
+            cursor="hand2",
+        )
+        self.sync_btn.pack(side=tk.RIGHT, padx=12, pady=10)
+
+        # 3. Status & Diagnostic Frame
         diag_frame = tk.LabelFrame(
             content,
-            text=" 2. Diagnóstico & Compatibilidad de Mods ",
+            text=" 3. Diagnóstico & Compatibilidad de Mods ",
             font=("Segoe UI", 10, "bold"),
             fg="#00e5ff",
             bg="#171722",
             bd=1,
             relief=tk.SOLID,
         )
-        diag_frame.pack(fill=tk.BOTH, expand=True, pady=8)
+        diag_frame.pack(fill=tk.BOTH, expand=True, pady=6)
 
-        # Path display
         path_box = tk.Frame(diag_frame, bg="#171722")
         path_box.pack(fill=tk.X, padx=12, pady=6)
 
@@ -243,27 +283,26 @@ class CyberpunkModApp(tk.Tk):
         )
         change_path_btn.pack(side=tk.RIGHT)
 
-        # Verification items text / checklist
         self.diag_txt = tk.Text(
             diag_frame,
             bg="#111119",
             fg="#dcdcdc",
             font=("Consolas", 9),
-            height=9,
+            height=8,
             bd=0,
             padx=10,
-            pady=10,
+            pady=8,
             relief=tk.FLAT,
         )
         self.diag_txt.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
 
-        # 3. Action / Launch Bar
-        bottom_bar = tk.Frame(self, bg="#13131b", height=80)
+        # 4. Bottom Action Bar
+        bottom_bar = tk.Frame(self, bg="#13131b", height=75)
         bottom_bar.pack(fill=tk.X, side=tk.BOTTOM, padx=0, pady=0)
 
         refresh_btn = tk.Button(
             bottom_bar,
-            text="🔄 Re-verificar Mods",
+            text="🔄 Re-verificar Todo",
             command=self.verify_installation,
             bg="#252536",
             fg="#ffffff",
@@ -273,7 +312,7 @@ class CyberpunkModApp(tk.Tk):
             pady=8,
             cursor="hand2",
         )
-        refresh_btn.pack(side=tk.LEFT, padx=20, pady=18)
+        refresh_btn.pack(side=tk.LEFT, padx=20, pady=15)
 
         self.play_btn = tk.Button(
             bottom_bar,
@@ -288,9 +327,9 @@ class CyberpunkModApp(tk.Tk):
             pady=8,
             cursor="hand2",
         )
-        self.play_btn.pack(side=tk.RIGHT, padx=20, pady=18)
+        self.play_btn.pack(side=tk.RIGHT, padx=20, pady=15)
 
-    def log_diag(self, msg, tag=None):
+    def log_diag(self, msg):
         self.diag_txt.insert(tk.END, msg + "\n")
         self.diag_txt.see(tk.END)
 
@@ -307,9 +346,46 @@ class CyberpunkModApp(tk.Tk):
                     "No se encontró Cyberpunk2077.exe dentro de la carpeta seleccionada ni en bin/x64/.",
                 )
 
+    def get_vortex_stats(self):
+        downloads_count = 0
+        staging_count = 0
+        collection_names = []
+
+        if VORTEX_DOWNLOADS.exists():
+            downloads_count = len([f for f in VORTEX_DOWNLOADS.glob("*") if f.is_file()])
+
+        if VORTEX_STAGING.exists():
+            staging_count = len([d for d in VORTEX_STAGING.iterdir() if d.is_dir()])
+
+        state_backups = VORTEX_APPDATA / "temp" / "state_backups_full"
+        if state_backups.exists():
+            files = list(state_backups.glob("*.json"))
+            if files:
+                latest = max(files, key=os.path.getmtime)
+                try:
+                    with open(latest, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        mods = data.get("persistent", {}).get("mods", {}).get("cyberpunk2077", {})
+                        for k, v in mods.items():
+                            if v.get("type") == "collection":
+                                name = v.get("attributes", {}).get("customFileName") or v.get("attributes", {}).get("name")
+                                if name and name not in collection_names:
+                                    collection_names.append(name)
+                except Exception:
+                    pass
+
+        return downloads_count, staging_count, collection_names
+
     def verify_installation(self):
         self.diag_txt.delete("1.0", tk.END)
         self.path_lbl.config(text=str(self.game_path) if self.game_path else "NO ENCONTRADA")
+
+        # Check Vortex status
+        dl_cnt, stg_cnt, collections = self.get_vortex_stats()
+        col_str = f"Colección: {', '.join(collections)}" if collections else "Colecciones detectadas"
+        self.vortex_status_lbl.config(
+            text=f"Vortex: {dl_cnt} descargas guardadas | {stg_cnt} mods instalados en Staging.\n{col_str}"
+        )
 
         if not self.game_path or not self.is_valid_game_path(self.game_path):
             self.status_badge.config(text="RUTA NO DETECTADA", bg="#ff3366", fg="#ffffff")
@@ -318,7 +394,7 @@ class CyberpunkModApp(tk.Tk):
             self.play_btn.config(state=tk.DISABLED, bg="#444455")
             return
 
-        self.log_diag(f"[+] Carpeta del juego detectada: {self.game_path}")
+        self.log_diag(f"[+] Carpeta del juego: {self.game_path}")
         exe = self.get_game_exe()
         self.log_diag(f"[+] Ejecutable: {exe}")
 
@@ -342,13 +418,12 @@ class CyberpunkModApp(tk.Tk):
         archive_mod = self.game_path / "archive" / "pc" / "mod"
         if archive_mod.exists():
             archives = sorted([f.name for f in archive_mod.glob("*.archive")])
-            self.log_diag(f"[✓] Archivos .archive instalados: {len(archives)}")
+            self.log_diag(f"[✓] Archivos .archive instalados en el juego: {len(archives)}")
 
-            # Comprobación de orden alfanumérico crítico
             base_mods = [a for a in archives if a.startswith(("#", "!"))]
             z_mods = [a for a in archives if a.lower().startswith("z")]
-            self.log_diag(f"    - Overhauls y bases de prioridad (#, !): {len(base_mods)} paquetes (cargan primero)")
-            self.log_diag(f"    - Parches y núcleos de sobreescritura (z...): {len(z_mods)} paquetes (cargan al final)")
+            self.log_diag(f"    - Overhauls base (#, !): {len(base_mods)} paquetes (cargan primero)")
+            self.log_diag(f"    - Parches y núcleos (z...): {len(z_mods)} paquetes (cargan al final)")
 
             if z_mods:
                 self.log_diag("    -> Orden de carga verificado: Traducciones y núcleos en posición de sobreescritura óptima.")
@@ -356,12 +431,63 @@ class CyberpunkModApp(tk.Tk):
             self.log_diag("[X] Carpeta archive/pc/mod no existe o está vacía.")
             all_ok = False
 
+        # Si hay mods en staging pero pocos en el juego, sugerir despliegue
+        if stg_cnt > 0 and archive_mod.exists() and len(list(archive_mod.glob("*.archive"))) < 10:
+            self.log_diag("[!] ATENCIÓN: Tienes mods descargados en Vortex que aún no están desplegados en el juego.")
+            self.log_diag("    Haz clic en 'Desplegar Mods de Vortex al Juego' arriba para sincronizarlos.")
+
         if all_ok:
             self.status_badge.config(text="✓ TODO LISTO PARA JUGAR", bg="#00ff66", fg="#05260f")
             self.play_btn.config(state=tk.NORMAL, bg="#00ff66", text="▶ JUGAR CYBERPUNK 2077")
         else:
             self.status_badge.config(text="REVISIÓN PENDIENTE", bg="#ffd600", fg="#0d0d11")
             self.play_btn.config(state=tk.NORMAL, bg="#ffd600", text="▶ INICIAR DE TODOS MODOS")
+
+    def sync_vortex_to_game(self):
+        """Despliega directamente los mods presentes en Vortex Staging a la carpeta del juego."""
+        if not self.game_path or not self.is_valid_game_path(self.game_path):
+            messagebox.showerror("Error", "Primero debes configurar una ruta válida de Cyberpunk 2077.")
+            return
+
+        if not VORTEX_STAGING.exists() or not any(VORTEX_STAGING.iterdir()):
+            messagebox.showinfo("Sin mods en Vortex", "No se encontraron mods en la carpeta staging de Vortex.")
+            return
+
+        confirm = messagebox.askyesno(
+            "Desplegar Mods de Vortex",
+            f"Se copiarán/sincronizarán los mods desde:\n{VORTEX_STAGING}\nhacia:\n{self.game_path}\n\n¿Deseas continuar?",
+        )
+        if not confirm:
+            return
+
+        self.log_diag("\n[*] Iniciando sincronización de mods desde Vortex al juego...")
+        copied = 0
+        errors = 0
+
+        for mod_folder in VORTEX_STAGING.iterdir():
+            if not mod_folder.is_dir():
+                continue
+            try:
+                for root, dirs, files in os.walk(mod_folder):
+                    rel_path = os.path.relpath(root, mod_folder)
+                    dest_dir = self.game_path if rel_path == "." else self.game_path / rel_path
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+
+                    for f in files:
+                        if f.endswith(".vortex") or f == "vortex.deployment.json":
+                            continue
+                        src_file = Path(root) / f
+                        dst_file = dest_dir / f
+                        if not dst_file.exists() or dst_file.stat().st_mtime < src_file.stat().st_mtime:
+                            shutil.copy2(src_file, dst_file)
+                            copied += 1
+            except Exception as e:
+                errors += 1
+                self.log_diag(f"[!] Error copiando mod {mod_folder.name}: {e}")
+
+        self.log_diag(f"[✓] Sincronización finalizada: {copied} archivos copiados/actualizados. Errores: {errors}")
+        messagebox.showinfo("Despliegue Completado", f"Se han sincronizado {copied} archivos desde Vortex hacia Cyberpunk 2077.")
+        self.verify_installation()
 
     def open_collection_url(self):
         url = self.url_var.get().strip()
@@ -372,7 +498,7 @@ class CyberpunkModApp(tk.Tk):
         if not self.auto_running:
             self.auto_running = True
             self.auto_btn.config(text="⏹ Detener Auto-Descarga", bg="#ff3366", fg="#ffffff")
-            self.log_diag("\n[*] Iniciando bucle de auto-descarga y clics automáticos...")
+            self.log_diag("\n[*] Iniciando bucle de auto-descarga de Nexus Mods / Vortex...")
             self.auto_thread = threading.Thread(target=self.run_auto_loop, daemon=True)
             self.auto_thread.start()
         else:
